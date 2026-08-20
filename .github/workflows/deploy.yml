@@ -15,12 +15,36 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      # 推荐：SSH_KEY 存本机 gha_deploy 的 Base64 单行（避免 Windows 粘贴丢换行）
+      - name: Decode SSH private key
+        id: ssh
+        env:
+          SSH_KEY_SECRET: ${{ secrets.SSH_KEY }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$RUNNER_TEMP/deploy_key"
+          if printf '%s' "$SSH_KEY_SECRET" | grep -q "BEGIN .*PRIVATE KEY"; then
+            printf '%s\n' "$SSH_KEY_SECRET" > "$KEY_FILE"
+          else
+            printf '%s' "$SSH_KEY_SECRET" | tr -d '\r\n\t ' | base64 -d > "$KEY_FILE"
+          fi
+          chmod 600 "$KEY_FILE"
+          ssh-keygen -y -f "$KEY_FILE" >/dev/null
+          DELIM="KEY_$(openssl rand -hex 16)"
+          {
+            echo "key<<${DELIM}"
+            cat "$KEY_FILE"
+            echo ""
+            echo "${DELIM}"
+          } >> "$GITHUB_OUTPUT"
+          echo "SSH key decoded OK"
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
+          key: ${{ steps.ssh.outputs.key }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script_stop: true
           script: |
