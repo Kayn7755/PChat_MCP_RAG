@@ -1,0 +1,36 @@
+# Deploy Modular RAG Dashboard on a single cloud VM.
+#
+# First-time on the server:
+#   1. git clone https://github.com/Kayn7755/ragmcp.git /opt/ragmcp
+#   2. cd /opt/ragmcp && cp .env.example .env && edit .env
+#   3. docker compose up -d --build
+#
+# Later (also what GitHub Actions does):
+#   git pull && docker compose up -d --build
+
+services:
+  dashboard:
+    build: .
+    image: ragmcp-dashboard:latest
+    container_name: ragmcp-dashboard
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    env_file:
+      - .env
+    environment:
+      # Fallback if .env is missing keys; compose still loads env_file when present
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+    volumes:
+      # Keep vector DB / BM25 / uploaded docs across redeploys
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Optional: override runtime config without rebuilding the image
+      - ./config/settings.yaml:/app/config/settings.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

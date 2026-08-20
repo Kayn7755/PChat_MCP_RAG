@@ -1,0 +1,65 @@
+# Root ignore for PChat_MCP_RAG monorepo
+
+# Nested VCS (do not re-add)
+**/.git/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtualenvs
+.venv/
+venv/
+ENV/
+env/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Secrets / local env
+.env
+.env.local
+.env.*.local
+!.env.example
+!**/.env.example
+!**/.env.development
+!**/.env.production
+secrets.yaml
+**/config/test_credentials.yaml
+
+# Runtime data / caches / logs
+**/data/
+cache/
+logs/
+*.log
+traces.jsonl
+*.db
+*.sqlite3
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Uploaded / generated docs under agent
+PChatMind-python-agent/data/

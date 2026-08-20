@@ -1,0 +1,17 @@
+[project]
+name = "myfastapi-app"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiomysql>=0.3.2",
+    "cryptography>=47.0.0",
+    "fastapi>=0.136.1",
+    "httpx>=0.28.1",
+    "passlib[bcrypt]==1.7.4",
+    "redis>=7.4.0",
+    "spglib>=2.7.0",
+    "sqlalchemy>=2.0.49",
+    "uvicorn>=0.46.0",
+]
