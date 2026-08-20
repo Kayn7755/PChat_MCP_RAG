@@ -1,0 +1,20 @@
+# Build context is monorepo root. Do not send huge/local junk to Docker daemon.
+.git
+**/.git
+**/.venv
+**/venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/data
+**/logs
+**/*.log
+**/.env
+**/.env.local
+PChatMind-python-agent/ui/dist
+PChatMind-python-agent/.agents
+PChatMind-python-agent/myfastapi_app-master
+*.md
+!DEPLOY.md

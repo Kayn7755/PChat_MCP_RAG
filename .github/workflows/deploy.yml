@@ -1,0 +1,52 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            DEPLOY_DIR='${{ secrets.DEPLOY_DIR }}'
+            if [ -z "$DEPLOY_DIR" ]; then
+              DEPLOY_DIR=/opt/pchat_mcp_rag
+            fi
+
+            if [ ! -d "$DEPLOY_DIR/.git" ]; then
+              echo "Deploy directory missing or not a git repo: $DEPLOY_DIR"
+              echo "On the server run once:"
+              echo "  sudo mkdir -p $DEPLOY_DIR && sudo chown \$USER:\$USER $DEPLOY_DIR"
+              echo "  git clone https://github.com/Kayn7755/PChat_MCP_RAG.git $DEPLOY_DIR"
+              echo "  cd $DEPLOY_DIR && cp .env.example .env && nano .env"
+              exit 1
+            fi
+
+            cd "$DEPLOY_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+
+            if [ ! -f .env ]; then
+              echo "Missing $DEPLOY_DIR/.env — copy from .env.example and fill secrets"
+              exit 1
+            fi
+
+            docker compose up -d --build
+            docker compose ps

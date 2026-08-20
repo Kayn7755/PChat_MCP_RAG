@@ -1,0 +1,99 @@
+# PChat_MCP_RAG — cloud VM deploy
+#
+# First time on the server:
+#   1. git clone https://github.com/Kayn7755/PChat_MCP_RAG.git /opt/pchat_mcp_rag
+#   2. cd /opt/pchat_mcp_rag && cp .env.example .env && edit .env
+#   3. docker compose up -d --build
+#
+# Later / GitHub Actions:
+#   git pull && docker compose up -d --build
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: pchat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-jchatmind}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./PChatMind-python-agent/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-jchatmind}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    # 仅本机调试时放开；生产建议注释掉 ports
+    # ports:
+    #   - "5432:5432"
+
+  agent:
+    build:
+      context: .
+      dockerfile: PChatMind-python-agent/Dockerfile
+    image: pchat-agent:latest
+    container_name: pchat-agent
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      JCHATMIND_HOST: 0.0.0.0
+      JCHATMIND_PORT: 8080
+      JCHATMIND_RAG_PROVIDER: mcp
+      JCHATMIND_MCP_RAG_SERVER_CWD: /app/modular-rag
+      JCHATMIND_MCP_DEFAULT_COLLECTION: ${JCHATMIND_MCP_DEFAULT_COLLECTION:-default}
+      JCHATMIND_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-jchatmind}
+      JCHATMIND_DOCUMENT_STORAGE_BASE_PATH: /app/data/documents
+      # MCP 子进程会继承这些 key（Modular embedding / LLM）
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+    ports:
+      - "${AGENT_PORT:-8080}:8080"
+    volumes:
+      # 与 Dashboard 共享向量库 / BM25
+      - modular_data:/app/modular-rag/data
+      - modular_logs:/app/modular-rag/logs
+      - agent_docs:/app/data/documents
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/docs"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  rag-dashboard:
+    build:
+      context: ./MODULAR-RAG-MCP-SERVER-main
+      dockerfile: Dockerfile
+    image: pchat-rag-dashboard:latest
+    container_name: pchat-rag-dashboard
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    volumes:
+      - modular_data:/app/data
+      - modular_logs:/app/logs
+      - ./MODULAR-RAG-MCP-SERVER-main/config/settings.yaml:/app/config/settings.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  pgdata:
+  modular_data:
+  modular_logs:
+  agent_docs:

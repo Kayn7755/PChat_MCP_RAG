@@ -33,13 +33,10 @@ dist-ssr/
 # Secrets / local env
 .env
 .env.local
-.env.*.local
 !.env.example
-!**/.env.example
-!**/.env.development
-!**/.env.production
 secrets.yaml
 **/config/test_credentials.yaml
+
 
 # Runtime data / caches / logs
 **/data/
