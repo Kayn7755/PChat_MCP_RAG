@@ -47,8 +47,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Agent Python deps
+# 先装 CPU 版 torch，避免 docling 拉 nvidia/cuda 几百 MB 导致构建超时
 COPY PChatMind-python-agent/requirements.txt /tmp/agent-requirements.txt
 RUN pip install --upgrade pip \
+    && pip install torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install -r /tmp/agent-requirements.txt
 
 # Modular RAG (MCP Server + hybrid search); Agent spawns: python -m src.mcp_server.server

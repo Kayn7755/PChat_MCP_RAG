@@ -12,11 +12,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # 云主机首次 docker build 很慢，给足时间
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
-      # 推荐：SSH_KEY 存本机 gha_deploy 的 Base64 单行（避免 Windows 粘贴丢换行）
       - name: Decode SSH private key
         id: ssh
         env:
@@ -47,8 +45,8 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ steps.ssh.outputs.key }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          # 默认约 10m，慢速 apt/pip 会触发 Run Command Timeout
-          command_timeout: 75m
+          # 必须显式加长；默认 10m。后台构建 + 轮询也需覆盖等待窗口
+          command_timeout: 2h
           script_stop: true
           script: |
             set -euo pipefail
@@ -75,5 +73,39 @@ jobs:
               exit 1
             fi
 
-            docker compose up -d --build
-            docker compose ps
+            LOG=/tmp/pchat-compose.log
+            rm -f "$LOG"
+            # 后台构建，避免 SSH/action 中间链路提前断开；本脚本再轮询结果
+            setsid docker compose up -d --build >"$LOG" 2>&1 < /dev/null &
+            echo $! > /tmp/pchat-compose.pid
+            echo "Started docker compose build pid=$(cat /tmp/pchat-compose.pid)"
+
+            ok=0
+            for i in $(seq 1 100); do
+              if curl -fsS http://127.0.0.1:8080/docs >/dev/null 2>&1 \
+                 && curl -fsS http://127.0.0.1:8501/_stcore/health >/dev/null 2>&1; then
+                echo "Both agent and dashboard are healthy"
+                ok=1
+                break
+              fi
+              if ! kill -0 "$(cat /tmp/pchat-compose.pid)" 2>/dev/null; then
+                echo "compose process exited; checking services..."
+                if curl -fsS http://127.0.0.1:8080/docs >/dev/null 2>&1; then
+                  ok=1
+                fi
+                break
+              fi
+              echo "[$i/100] building... (tail)"
+              tail -n 5 "$LOG" || true
+              sleep 60
+            done
+
+            echo "======== last 80 log lines ========"
+            tail -n 80 "$LOG" || true
+            docker compose ps || true
+
+            if [ "$ok" -ne 1 ]; then
+              echo "Deploy failed or timed out waiting for healthy services"
+              exit 1
+            fi
+            echo "Deploy OK"
