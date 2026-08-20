@@ -33,7 +33,6 @@ tests
 **/*.ipynb
 Modular RAG MCP Server.md
 项目经验.ipynb
-README.md
 .dockerignore
 Dockerfile
 docker-compose.yml

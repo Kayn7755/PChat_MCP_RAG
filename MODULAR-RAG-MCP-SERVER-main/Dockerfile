@@ -19,7 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first for better layer caching
-COPY pyproject.toml ./
+# hatchling needs README.md (see pyproject.toml readme = "README.md")
+COPY pyproject.toml README.md ./
 COPY src ./src
 COPY main.py ./
 COPY config ./config
