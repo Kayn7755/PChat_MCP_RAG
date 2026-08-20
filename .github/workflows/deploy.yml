@@ -12,7 +12,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 云主机首次 docker build 很慢，给足时间
+    timeout-minutes: 90
 
     steps:
       # 推荐：SSH_KEY 存本机 gha_deploy 的 Base64 单行（避免 Windows 粘贴丢换行）
@@ -46,6 +47,8 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ steps.ssh.outputs.key }}
           port: ${{ secrets.SSH_PORT || 22 }}
+          # 默认约 10m，慢速 apt/pip 会触发 Run Command Timeout
+          command_timeout: 75m
           script_stop: true
           script: |
             set -euo pipefail

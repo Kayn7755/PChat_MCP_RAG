@@ -6,7 +6,7 @@
 FROM node:22-bookworm-slim AS ui
 WORKDIR /ui
 COPY PChatMind-python-agent/ui/package.json PChatMind-python-agent/ui/package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=https://registry.npmmirror.com
 COPY PChatMind-python-agent/ui/ ./
 RUN npm run build
 
@@ -17,6 +17,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
     JCHATMIND_HOST=0.0.0.0 \
     JCHATMIND_PORT=8080 \
     JCHATMIND_RAG_PROVIDER=mcp \
@@ -25,6 +28,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     JCHATMIND_DOCUMENT_STORAGE_BASE_PATH=/app/data/documents
 
 WORKDIR /app
+
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources; \
+      sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+      sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
+      sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
+    fi
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
