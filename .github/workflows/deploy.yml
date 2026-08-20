@@ -12,10 +12,10 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # 仅受 GHA job 超时约束（不再依赖 appleboy 默认 10m）
     timeout-minutes: 120
 
     steps:
-      # 在 GitHub Runner 上取代码（服务器往往访问不了 github.com）
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -33,13 +33,7 @@ jobs:
           fi
           chmod 600 "$KEY_FILE"
           ssh-keygen -y -f "$KEY_FILE" >/dev/null
-          DELIM="KEY_$(openssl rand -hex 16)"
-          {
-            echo "key<<${DELIM}"
-            cat "$KEY_FILE"
-            echo ""
-            echo "${DELIM}"
-          } >> "$GITHUB_OUTPUT"
+          echo "key_path=$KEY_FILE" >> "$GITHUB_OUTPUT"
           echo "SSH key decoded OK"
 
       - name: Pack release tarball
@@ -60,85 +54,75 @@ jobs:
             .
           ls -lh pchat_mcp_rag.tgz
 
-      - name: Upload tarball to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ steps.ssh.outputs.key }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          source: "pchat_mcp_rag.tgz"
-          target: "/tmp/"
-          timeout: 10m
-          command_timeout: 30m
+      - name: Upload + remote build (native SSH, no 10m appleboy limit)
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+          KEY_PATH: ${{ steps.ssh.outputs.key_path }}
+        run: |
+          set -euo pipefail
+          PORT="${SSH_PORT:-22}"
+          DIR="${DEPLOY_DIR:-/opt/pchat_mcp_rag}"
+          SSH=(ssh -i "$KEY_PATH" -p "$PORT" -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=120)
+          SCP=(scp -i "$KEY_PATH" -P "$PORT" -o StrictHostKeyChecking=no)
 
-      - name: Unpack and docker compose
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ steps.ssh.outputs.key }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          command_timeout: 2h
-          script_stop: true
-          script: |
-            set -euo pipefail
-            DEPLOY_DIR='${{ secrets.DEPLOY_DIR }}'
-            if [ -z "$DEPLOY_DIR" ]; then
-              DEPLOY_DIR=/opt/pchat_mcp_rag
+          echo "Uploading tarball..."
+          "${SCP[@]}" pchat_mcp_rag.tgz "${SSH_USER}@${SSH_HOST}:/tmp/pchat_mcp_rag.tgz"
+
+          echo "Remote unpack + compose..."
+          "${SSH[@]}" "${SSH_USER}@${SSH_HOST}" "DEPLOY_DIR=$(printf %q "$DIR") bash -s" <<'EOS'
+          set -euo pipefail
+          mkdir -p "$DEPLOY_DIR"
+          if [ -f "$DEPLOY_DIR/.env" ]; then
+            cp "$DEPLOY_DIR/.env" /tmp/pchat.env.bak
+          fi
+          tar -xzf /tmp/pchat_mcp_rag.tgz -C "$DEPLOY_DIR"
+          rm -f /tmp/pchat_mcp_rag.tgz
+          if [ -f /tmp/pchat.env.bak ]; then
+            cp /tmp/pchat.env.bak "$DEPLOY_DIR/.env"
+          fi
+          cd "$DEPLOY_DIR"
+          if [ ! -f .env ]; then
+            echo "Missing $DEPLOY_DIR/.env — create it once from .env.example"
+            exit 1
+          fi
+
+          LOG=/tmp/pchat-compose.log
+          rm -f "$LOG"
+          # 后台构建，SSH 会话只负责轮询（ServerAlive 保活）
+          setsid docker compose up -d --build >"$LOG" 2>&1 < /dev/null &
+          echo $! > /tmp/pchat-compose.pid
+          echo "Started docker compose pid=$(cat /tmp/pchat-compose.pid)"
+
+          ok=0
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/docs >/dev/null 2>&1 \
+               && curl -fsS http://127.0.0.1:8501/_stcore/health >/dev/null 2>&1; then
+              echo "Both agent and dashboard are healthy"
+              ok=1
+              break
             fi
-
-            mkdir -p "$DEPLOY_DIR"
-            # 保留服务器上的 .env（密钥不进 Git）
-            if [ -f "$DEPLOY_DIR/.env" ]; then
-              cp "$DEPLOY_DIR/.env" /tmp/pchat.env.bak
-            fi
-
-            tar -xzf /tmp/pchat_mcp_rag.tgz -C "$DEPLOY_DIR"
-            rm -f /tmp/pchat_mcp_rag.tgz
-
-            if [ -f /tmp/pchat.env.bak ]; then
-              cp /tmp/pchat.env.bak "$DEPLOY_DIR/.env"
-            fi
-
-            cd "$DEPLOY_DIR"
-            if [ ! -f .env ]; then
-              echo "Missing $DEPLOY_DIR/.env — copy from .env.example and fill secrets once"
-              exit 1
-            fi
-
-            LOG=/tmp/pchat-compose.log
-            rm -f "$LOG"
-            setsid docker compose up -d --build >"$LOG" 2>&1 < /dev/null &
-            echo $! > /tmp/pchat-compose.pid
-            echo "Started docker compose build pid=$(cat /tmp/pchat-compose.pid)"
-
-            ok=0
-            for i in $(seq 1 100); do
-              if curl -fsS http://127.0.0.1:8080/docs >/dev/null 2>&1 \
-                 && curl -fsS http://127.0.0.1:8501/_stcore/health >/dev/null 2>&1; then
-                echo "Both agent and dashboard are healthy"
+            if ! kill -0 "$(cat /tmp/pchat-compose.pid)" 2>/dev/null; then
+              echo "compose process exited; checking services..."
+              if curl -fsS http://127.0.0.1:8080/docs >/dev/null 2>&1; then
                 ok=1
-                break
               fi
-              if ! kill -0 "$(cat /tmp/pchat-compose.pid)" 2>/dev/null; then
-                echo "compose process exited; checking services..."
-                if curl -fsS http://127.0.0.1:8080/docs >/dev/null 2>&1; then
-                  ok=1
-                fi
-                break
-              fi
-              echo "[$i/100] building... (tail)"
-              tail -n 5 "$LOG" || true
-              sleep 60
-            done
-
-            echo "======== last 80 log lines ========"
-            tail -n 80 "$LOG" || true
-            docker compose ps || true
-
-            if [ "$ok" -ne 1 ]; then
-              echo "Deploy failed or timed out waiting for healthy services"
-              exit 1
+              break
             fi
-            echo "Deploy OK"
+            echo "[$i/90] building... (tail)"
+            tail -n 8 "$LOG" || true
+            sleep 60
+          done
+
+          echo "======== last 100 log lines ========"
+          tail -n 100 "$LOG" || true
+          docker compose ps || true
+
+          if [ "$ok" -ne 1 ]; then
+            echo "Deploy failed or timed out waiting for healthy services"
+            exit 1
+          fi
+          echo "Deploy OK"
+          EOS

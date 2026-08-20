@@ -38,19 +38,16 @@ RUN set -eux; \
       sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
     fi
 
+# Keep apt set minimal — no build-essential (slower on tiny VMs). Add back if a wheel is missing.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
         curl \
-        git \
         libgl1 \
         libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Agent Python deps
-# 先装 CPU 版 torch，避免 docling 拉 nvidia/cuda 几百 MB 导致构建超时
-COPY PChatMind-python-agent/requirements.txt /tmp/agent-requirements.txt
+# Slim cloud deps (no docling/torch — those make first build take hours)
+COPY PChatMind-python-agent/requirements.docker.txt /tmp/agent-requirements.txt
 RUN pip install --upgrade pip \
-    && pip install torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install -r /tmp/agent-requirements.txt
 
 # Modular RAG (MCP Server + hybrid search); Agent spawns: python -m src.mcp_server.server
