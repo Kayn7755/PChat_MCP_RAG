@@ -44,12 +44,23 @@ docker compose up -d --build
 |--------|------|
 | `SSH_HOST` | 服务器 IP / 域名 |
 | `SSH_USER` | SSH 用户 |
-| `SSH_KEY` | 私钥全文 |
+| `SSH_KEY` | 私钥 Base64（推荐）或 PEM 全文 |
 | `SSH_PORT` | 可选，默认 22 |
 | `DEPLOY_DIR` | 可选，默认 `/opt/pchat_mcp_rag` |
 
-2. 服务器已完成「首次上机」，且 `authorized_keys` 已放公钥  
-3. 之后每次 `push` 到 `main`：Actions SSH → `git reset --hard origin/main` → `docker compose up -d --build`
+2. 服务器已完成「首次上机」（至少要有 `.env`），且 `authorized_keys` 已放公钥  
+3. 之后每次 `push` 到 `main`：Actions **在 Runner 上 checkout → SCP 打包上传 → 服务器 docker compose**  
+   （不在服务器上 `git pull`，避免云主机访问不了 `github.com`）
+
+首次若还没有目录，可先手动：
+
+```bash
+sudo mkdir -p /opt/pchat_mcp_rag && sudo chown $USER:$USER /opt/pchat_mcp_rag
+cd /opt/pchat_mcp_rag
+# 至少准备好 .env；代码会由下一次 Actions SCP 覆盖写入
+cp /path/to/.env.example .env && nano .env
+```
+
 
 ## 本仓库新增的文件
 

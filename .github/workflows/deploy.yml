@@ -15,6 +15,10 @@ jobs:
     timeout-minutes: 120
 
     steps:
+      # 在 GitHub Runner 上取代码（服务器往往访问不了 github.com）
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Decode SSH private key
         id: ssh
         env:
@@ -38,14 +42,43 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "SSH key decoded OK"
 
-      - name: Deploy over SSH
+      - name: Pack release tarball
+        run: |
+          set -euo pipefail
+          tar -czf pchat_mcp_rag.tgz \
+            --exclude='./.git' \
+            --exclude='./pchat_mcp_rag.tgz' \
+            --exclude='*/.venv' \
+            --exclude='*/venv' \
+            --exclude='*/node_modules' \
+            --exclude='*/data' \
+            --exclude='*/logs' \
+            --exclude='*/__pycache__' \
+            --exclude='*/.pytest_cache' \
+            --exclude='*/.mypy_cache' \
+            --exclude='*/ui/dist' \
+            .
+          ls -lh pchat_mcp_rag.tgz
+
+      - name: Upload tarball to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ steps.ssh.outputs.key }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "pchat_mcp_rag.tgz"
+          target: "/tmp/"
+          timeout: 10m
+          command_timeout: 30m
+
+      - name: Unpack and docker compose
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ steps.ssh.outputs.key }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          # 必须显式加长；默认 10m。后台构建 + 轮询也需覆盖等待窗口
           command_timeout: 2h
           script_stop: true
           script: |
@@ -55,27 +88,27 @@ jobs:
               DEPLOY_DIR=/opt/pchat_mcp_rag
             fi
 
-            if [ ! -d "$DEPLOY_DIR/.git" ]; then
-              echo "Deploy directory missing or not a git repo: $DEPLOY_DIR"
-              echo "On the server run once:"
-              echo "  sudo mkdir -p $DEPLOY_DIR && sudo chown \$USER:\$USER $DEPLOY_DIR"
-              echo "  git clone https://github.com/Kayn7755/PChat_MCP_RAG.git $DEPLOY_DIR"
-              echo "  cd $DEPLOY_DIR && cp .env.example .env && nano .env"
-              exit 1
+            mkdir -p "$DEPLOY_DIR"
+            # 保留服务器上的 .env（密钥不进 Git）
+            if [ -f "$DEPLOY_DIR/.env" ]; then
+              cp "$DEPLOY_DIR/.env" /tmp/pchat.env.bak
+            fi
+
+            tar -xzf /tmp/pchat_mcp_rag.tgz -C "$DEPLOY_DIR"
+            rm -f /tmp/pchat_mcp_rag.tgz
+
+            if [ -f /tmp/pchat.env.bak ]; then
+              cp /tmp/pchat.env.bak "$DEPLOY_DIR/.env"
             fi
 
             cd "$DEPLOY_DIR"
-            git fetch origin main
-            git reset --hard origin/main
-
             if [ ! -f .env ]; then
-              echo "Missing $DEPLOY_DIR/.env — copy from .env.example and fill secrets"
+              echo "Missing $DEPLOY_DIR/.env — copy from .env.example and fill secrets once"
               exit 1
             fi
 
             LOG=/tmp/pchat-compose.log
             rm -f "$LOG"
-            # 后台构建，避免 SSH/action 中间链路提前断开；本脚本再轮询结果
             setsid docker compose up -d --build >"$LOG" 2>&1 < /dev/null &
             echo $! > /tmp/pchat-compose.pid
             echo "Started docker compose build pid=$(cat /tmp/pchat-compose.pid)"
